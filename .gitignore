@@ -1,0 +1,11 @@
+*.bak
+*~
+*.o
+*.cmd.*
+*.mod.*
+*.order
+*.ko
+*.symvers
+*.run
+*.mod
+*.cmd
