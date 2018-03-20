@@ -58,20 +58,40 @@ static void myprintk_ts(struct timespec *ts)
 		ts->tv_nsec / 1000);
 }
 
+static int enqueue(struct list_head *q, struct timespec *ts)
+{
+	struct myqueue_element *qe = NULL;
+	
+	qe = kmalloc(sizeof(struct myqueue_element),
+			GFP_ATOMIC);
+	if(!qe)
+		return -1;
+			
+	(qe->ts).sec = ts->tv_sec;
+	(qe->ts).nsec = ts->tv_nsec;
+	(qe->ts).valid = 1;
+	
+	list_add_tail(&qe->next, q);
+	
+	return 0;
+}
+
+static struct myqueue_element *dequeue(struct list_head *q)
+{
+	struct myqueue_element *qe = NULL;
+	
+	qe = list_first_entry(q, struct myqueue_element,
+		next);
+	list_del(&qe->next);
+	
+	return qe;
+}
+
 static void mytimer_handler(unsigned long data)
 {
-		struct myqueue_element *new_ts;
-
 		getnstimeofday(&ts_current);
 
-		new_ts = kmalloc(sizeof(struct myqueue_element),
-			GFP_ATOMIC);
-
-		(new_ts->ts).sec = ts_current.tv_sec;
-		(new_ts->ts).nsec = ts_current.tv_nsec;
-		(new_ts->ts).valid = 1;
-
-		list_add_tail(&new_ts->next, &queue);
+		enqueue(&queue, &ts_current);
 
 		mod_timer(&mytimer, jiffies + TIMER_PERIOD);
 }
@@ -98,10 +118,7 @@ static void netlink_f_recv_msg(struct sk_buff *skb)
 	
 	if (!list_empty(&queue)) {
 		if(!strcmp("GETTS",recv_buf)) {
-			struct myqueue_element *qe;
-			qe = list_first_entry(&queue, struct myqueue_element,
-			next);
-			list_del(&qe->next);
+			struct myqueue_element *qe = dequeue(&queue);
 			
 			sprintf(msg,"%.2llu:%.2llu:%.2llu:%.6llu:v%d",
 				(qe->ts.sec / 3600) % (24),

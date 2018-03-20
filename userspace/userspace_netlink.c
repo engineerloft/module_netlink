@@ -105,7 +105,6 @@ int main(int argc, char *argv[])
 	for(i = 0 ; i < ntimes ; i++) {
 		printf("Copying buffer... \n");
 		strcpy(NLMSG_DATA(nlh), "GETTS");
-		//strcpy(NLMSG_DATA(nlh), "HELLO");
 		nlh->nlmsg_pid = getpid();
 		printf("Sending buffer... \n");
 		sendmsg(sock_fd,&msg, 0); //MSG_DONTWAIT);
@@ -113,9 +112,12 @@ int main(int argc, char *argv[])
 		recvmsg(sock_fd, &msg, 0); //lMSG_DONTWAIT);
 		buf = (char *)NLMSG_DATA(nlh);
 		printf("Received message payload: %s\n", buf);
-		sscanf(buf, "%lu:%lu:%lu:%lu:v%d",
-			&ts.hour, &ts.min, &ts.sec, &ts.nsec, &ts.valid);
-		printf_myts(&ts);
+		
+		if (strcmp(buf,"ERROR") && strcmp(buf,"QUEUE EMPTY")) {
+			sscanf(buf, "%lu:%lu:%lu:%lu:v%d",
+				&ts.hour, &ts.min, &ts.sec, &ts.nsec, &ts.valid);
+			printf_myts(&ts);
+		}
 		sleep(1);
 	}
 	
