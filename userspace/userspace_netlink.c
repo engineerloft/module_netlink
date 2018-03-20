@@ -20,6 +20,7 @@
 #include <sys/types.h>
 #include <linux/netlink.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -35,11 +36,32 @@ struct msghdr msg;
 
 #define NTIMES 100
 
+struct myts {
+		uint64_t hour;
+		uint64_t min;
+		uint64_t sec;
+		uint64_t nsec;
+		int valid;
+};
+
+void printf_myts(struct myts *ts)
+{
+	printf("============== TS ================ \n");
+	printf("Hour: %lu \n", ts->hour);
+	printf("Min: %lu \n", ts->min);
+	printf("Sec: %lu \n", ts->sec);
+	printf("Nsec: %lu \n", ts->nsec);
+	printf("Valid: %d \n", ts->valid);
+	printf("================================== \n");
+}
+
 int main(int argc, char *argv[])
 {
 	int res;
 	int i;
 	int ntimes;
+	char *buf;
+	struct myts ts;
 	
 	if (argc < 2) {
 		printf("Using %d times for the netlink test \n", NTIMES);
@@ -89,9 +111,11 @@ int main(int argc, char *argv[])
 		sendmsg(sock_fd,&msg, 0); //MSG_DONTWAIT);
 		printf("Receiving buffer... \n");
 		recvmsg(sock_fd, &msg, 0); //lMSG_DONTWAIT);
-		printf("Received message payload: %s\n", 
-			(char *)NLMSG_DATA(nlh));
-		
+		buf = (char *)NLMSG_DATA(nlh);
+		printf("Received message payload: %s\n", buf);
+		sscanf(buf, "%lu:%lu:%lu:%lu:v%d",
+			&ts.hour, &ts.min, &ts.sec, &ts.nsec, &ts.valid);
+		printf_myts(&ts);
 		sleep(1);
 	}
 	
