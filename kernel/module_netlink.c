@@ -30,6 +30,11 @@
 #define NETLINK_CUSTOM_PROTO 31
 
 #define TIMER_PERIOD 1*HZ
+#define TX_TS_PERIOD 5
+#define RX_TS_PERIOD 5
+static int mytimer_events = 0;
+static u64 tx_seq = 0;
+static u64 rx_seq = 0;
 static void mytimer_handler(unsigned long data);
 DEFINE_TIMER(mytimer, mytimer_handler, 0, 0);
 
@@ -39,7 +44,9 @@ struct timespec ts_current;
 struct myts {
 		u64 sec;
 		u64 nsec;
+		u64 seq;
 		int valid;
+		int tx_rx;
 };
 
 struct myqueue_element {
@@ -47,7 +54,8 @@ struct myqueue_element {
 		struct myts ts;
 };
 
-static struct list_head queue;
+static struct list_head rx_queue;
+static struct list_head tx_queue;
 
 static void myprintk_ts(struct timespec *ts)
 {
@@ -58,19 +66,27 @@ static void myprintk_ts(struct timespec *ts)
 		ts->tv_nsec / 1000);
 }
 
-static int enqueue(struct list_head *q, struct timespec *ts)
+static struct myqueue_element * kmalloc_qe(struct timespec *ts, 
+	int valid, int tx_rx, u64 seq)
 {
 	struct myqueue_element *qe = NULL;
 	
 	qe = kmalloc(sizeof(struct myqueue_element),
 			GFP_ATOMIC);
 	if(!qe)
-		return -1;
+		return NULL;
 			
 	(qe->ts).sec = ts->tv_sec;
 	(qe->ts).nsec = ts->tv_nsec;
-	(qe->ts).valid = 1;
+	(qe->ts).valid = valid;
+	(qe->ts).tx_rx = tx_rx;
+	(qe->ts).seq = seq;
 	
+	return qe;
+}
+
+static int enqueue(struct list_head *q, struct myqueue_element *qe)
+{	
 	list_add_tail(&qe->next, q);
 	
 	return 0;
@@ -87,11 +103,49 @@ static struct myqueue_element *dequeue(struct list_head *q)
 	return qe;
 }
 
+static void kfree_queue(struct list_head *q)
+{
+	struct myqueue_element *qe = NULL;
+	
+	while (!list_empty(q)) {
+		qe = list_first_entry(q, struct myqueue_element,
+			next);
+		list_del(&qe->next);
+		kfree(qe);
+	}
+}
+
+static void sprintf_ts(char *buf, struct myqueue_element *qe)
+{
+	sprintf(buf,"%.2llu:%.2llu:%.2llu:%llu:v%d:t%d:s%llu",
+				(qe->ts.sec / 3600) % (24),
+				(qe->ts.sec / 60) % (60),
+				qe->ts.sec % 60,
+				qe->ts.nsec / 1000,
+				qe->ts.valid,
+				qe->ts.tx_rx,
+				qe->ts.seq);
+}
+
 static void mytimer_handler(unsigned long data)
 {
+		struct myqueue_element *qe = NULL;
+		
 		getnstimeofday(&ts_current);
 
-		enqueue(&queue, &ts_current);
+		if (mytimer_events % TX_TS_PERIOD == 0) {
+			qe = kmalloc_qe(&ts_current, 1, 0, tx_seq);
+			enqueue(&tx_queue, qe);
+			tx_seq++;
+		}
+			
+		if (mytimer_events % RX_TS_PERIOD == 0) {
+			qe = kmalloc_qe(&ts_current, 1, 1, rx_seq);
+			enqueue(&rx_queue, qe);
+			rx_seq++;
+		}
+		
+		mytimer_events++;
 
 		mod_timer(&mytimer, jiffies + TIMER_PERIOD);
 }
@@ -109,6 +163,9 @@ static void netlink_f_recv_msg(struct sk_buff *skb)
 	char *recv_buf = NULL;
 	char *error_string = "ERROR";
 	char *queue_empty = "QUEUE EMPTY";
+	int rx_queue_cmd = 0;
+	int tx_queue_cmd = 0;
+	int queue_cmd = 0;
 
 	msg_size = strlen(msg);
 	nlh = (struct nlmsghdr*)skb->data;
@@ -116,23 +173,33 @@ static void netlink_f_recv_msg(struct sk_buff *skb)
 	
 	recv_buf = (char *) nlmsg_data(nlh);
 	
-	if (!list_empty(&queue)) {
-		if(!strcmp("GETTS",recv_buf)) {
-			struct myqueue_element *qe = dequeue(&queue);
+	rx_queue_cmd = !strcmp("GETTS_RX",recv_buf);
+	tx_queue_cmd = !strcmp("GETTS_TX",recv_buf);
+	queue_cmd = rx_queue_cmd || tx_queue_cmd;
+	
+	if (queue_cmd) {
+			struct myqueue_element *qe = NULL;
 			
-			sprintf(msg,"%.2llu:%.2llu:%.2llu:%.6llu:v%d",
-				(qe->ts.sec / 3600) % (24),
-				(qe->ts.sec / 60) % (60),
-				qe->ts.sec % 60,
-				qe->ts.nsec / 1000,
-				qe->ts.valid);
+			if(rx_queue_cmd) {
+				if (!list_empty(&rx_queue)) {
+					qe = dequeue(&rx_queue);
+					sprintf_ts(msg,qe);
+				} else {
+					strcpy(msg,queue_empty);
+				}
+			}
+			else {
+				if (!list_empty(&tx_queue)) {
+					qe = dequeue(&tx_queue);
+					sprintf_ts(msg,qe);
+				} else {
+					strcpy(msg,queue_empty);
+				}
+			}
 			
 			kfree(qe);
-		} else {
-			strcpy(msg,error_string);
-		}
 	} else {
-		strcpy(msg,queue_empty);
+		strcpy(msg,error_string);
 	}
 
 	/* Send the msg from kernel to the user */
@@ -173,7 +240,8 @@ static int __init netlink_module_init(void)
 
 	}
 	
-	INIT_LIST_HEAD(&queue);
+	INIT_LIST_HEAD(&rx_queue);
+	INIT_LIST_HEAD(&tx_queue);
 	
 	mod_timer(&mytimer, jiffies+TIMER_PERIOD);
 
@@ -181,21 +249,15 @@ static int __init netlink_module_init(void)
 }
 
 static void __exit netlink_module_exit(void) 
-{
-	struct myqueue_element *qe;
-	
+{	
 	getnstimeofday(&ts_current);
 	pr_info("%s: Exiting... \n",__func__);
 	myprintk_ts(&ts_current);
 	del_timer(&mytimer);
 	netlink_kernel_release(nl_sk);
 	
-	while (!list_empty(&queue)) {
-		qe = list_first_entry(&queue, struct myqueue_element,
-			next);
-		list_del(&qe->next);
-		kfree(qe);
-	}
+	kfree_queue(&rx_queue);
+	kfree_queue(&tx_queue);
 }
 
 module_init(netlink_module_init); 

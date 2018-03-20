@@ -41,7 +41,9 @@ struct myts {
 		uint64_t min;
 		uint64_t sec;
 		uint64_t nsec;
+		uint64_t seq;
 		int valid;
+		int tx_rx;
 };
 
 void printf_myts(struct myts *ts)
@@ -52,6 +54,8 @@ void printf_myts(struct myts *ts)
 	printf("Sec: %lu \n", ts->sec);
 	printf("Nsec: %lu \n", ts->nsec);
 	printf("Valid: %d \n", ts->valid);
+	printf("TX_RX: %d \n", ts->tx_rx);
+	printf("Seq: %lu \n", ts->seq);
 	printf("================================== \n");
 }
 
@@ -104,7 +108,11 @@ int main(int argc, char *argv[])
 	/* Read message from kernel */
 	for(i = 0 ; i < ntimes ; i++) {
 		printf("Copying buffer... \n");
-		strcpy(NLMSG_DATA(nlh), "GETTS");
+		if (i % 2 == 0)
+			strcpy(NLMSG_DATA(nlh), "GETTS_TX");
+		else
+			strcpy(NLMSG_DATA(nlh), "GETTS_RX");
+			
 		nlh->nlmsg_pid = getpid();
 		printf("Sending buffer... \n");
 		sendmsg(sock_fd,&msg, 0); //MSG_DONTWAIT);
@@ -114,8 +122,10 @@ int main(int argc, char *argv[])
 		printf("Received message payload: %s\n", buf);
 		
 		if (strcmp(buf,"ERROR") && strcmp(buf,"QUEUE EMPTY")) {
-			sscanf(buf, "%lu:%lu:%lu:%lu:v%d",
-				&ts.hour, &ts.min, &ts.sec, &ts.nsec, &ts.valid);
+			sscanf(buf, "%lu:%lu:%lu:%lu:v%d:t%d:s%lu",
+				&ts.hour, &ts.min, &ts.sec, 
+				&ts.nsec, &ts.valid, 
+				&ts.tx_rx, &ts.seq);
 			printf_myts(&ts);
 		}
 		sleep(1);
