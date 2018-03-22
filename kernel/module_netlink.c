@@ -84,25 +84,21 @@ static void netlink_f_recv_msg(struct sk_buff *skb)
 	struct nlmsghdr *nlh;
 	int pid;
 	struct sk_buff *skb_out;
-	int msg_size;
-	char msg[MSG_SIZE_MAX];
 	int res;
-	//struct timespec *ts = &(ts_current);
-	char *recv_buf = NULL;
-	char *error_string = "ERROR";
-	char *queue_empty = "QUEUE EMPTY";
+	int msg_size;
+	struct mynl_cmd *cmd = NULL;
 	int rx_queue_cmd = 0;
 	int tx_queue_cmd = 0;
 	int queue_cmd = 0;
 
-	msg_size = strlen(msg);
+	msg_size = MSG_SIZE_MAX;
 	nlh = (struct nlmsghdr*)skb->data;
 	pid = nlh->nlmsg_pid; /*pid of sending process */
 	
-	recv_buf = (char *) nlmsg_data(nlh);
+	cmd = (struct mynl_cmd *) nlmsg_data(nlh);
 	
-	rx_queue_cmd = !strcmp("GETTS_RX",recv_buf);
-	tx_queue_cmd = !strcmp("GETTS_TX",recv_buf);
+	rx_queue_cmd = (cmd->cmd == MYNL_CMD_GETTS_RX);
+	tx_queue_cmd = (cmd->cmd == MYNL_CMD_GETTS_TX);
 	queue_cmd = rx_queue_cmd || tx_queue_cmd;
 	
 	if (queue_cmd) {
@@ -111,23 +107,25 @@ static void netlink_f_recv_msg(struct sk_buff *skb)
 			if(rx_queue_cmd) {
 				if (!is_queue_empty(&rx_queue)) {
 					qe = dequeue(&rx_queue);
-					sprintf_ts(msg,qe);
+					cmd->ts = qe->ts;
+					cmd->cmd = MYNL_CMD_OK_RESP;
 				} else {
-					strcpy(msg,queue_empty);
+					cmd->cmd = MYNL_CMD_QEMPTY_RESP;
 				}
 			}
 			else {
 				if (!is_queue_empty(&tx_queue)) {
 					qe = dequeue(&tx_queue);
-					sprintf_ts(msg,qe);
+					cmd->ts = qe->ts;
+					cmd->cmd = MYNL_CMD_OK_RESP;
 				} else {
-					strcpy(msg,queue_empty);
+					cmd->cmd = MYNL_CMD_QEMPTY_RESP;
 				}
 			}
 			
 			kfree(qe);
 	} else {
-		strcpy(msg,error_string);
+		cmd->cmd = MYNL_CMD_QERROR_RESP;
 	}
 
 	/* Send the msg from kernel to the user */
@@ -139,7 +137,7 @@ static void netlink_f_recv_msg(struct sk_buff *skb)
 
 	nlh = nlmsg_put(skb_out, 0, 0, NLMSG_DONE, msg_size, 0);  
 	NETLINK_CB(skb_out).dst_group = 0; /* not in mcast group */
-	strncpy(nlmsg_data(nlh), msg, msg_size);
+	memcpy(nlmsg_data(nlh), cmd, msg_size);
 
 	res = nlmsg_unicast(nl_sk, skb_out, pid);
 	if (res)

@@ -27,7 +27,7 @@
 
 #define NETLINK_USER 31
 
-#define MAX_PAYLOAD 1024 /* maximum payload size*/
+#define MAX_PAYLOAD 512 /* maximum payload size*/
 struct sockaddr_nl src_addr, dest_addr;
 struct nlmsghdr *nlh = NULL;
 struct iovec iov;
@@ -37,8 +37,6 @@ struct msghdr msg;
 #define NTIMES 100
 
 struct myts {
-		uint64_t hour;
-		uint64_t min;
 		uint64_t sec;
 		uint64_t nsec;
 		uint64_t seq;
@@ -46,17 +44,27 @@ struct myts {
 		int tx_rx;
 };
 
+#define MYNL_CMD_GETTS_TX 0
+#define MYNL_CMD_GETTS_RX 1
+#define MYNL_CMD_OK_RESP 2
+#define MYNL_CMD_QEMPTY_RESP 3
+#define MYNL_CMD_QERROR_RESP 4
+
+struct mynl_cmd {
+	int cmd;
+	struct myts ts;
+};
+
 void printf_myts(struct myts *ts)
 {
-	printf("============== TS ================ \n");
-	printf("Hour: %lu \n", ts->hour);
-	printf("Min: %lu \n", ts->min);
-	printf("Sec: %lu \n", ts->sec);
-	printf("Nsec: %lu \n", ts->nsec);
-	printf("Valid: %d \n", ts->valid);
-	printf("TX_RX: %d \n", ts->tx_rx);
-	printf("Seq: %lu \n", ts->seq);
-	printf("================================== \n");
+	printf("\n\n");
+	printf("Got TS from Queue: \n");
+	printf("sec: %lu \n",ts->sec);
+	printf("nsec: %lu \n",ts->nsec);
+	printf("seq: %lu \n",ts->seq);
+	printf("valid: %d \n",ts->valid);
+	printf("type: %s \n",(ts->tx_rx == 0) ? "Tx" : "Rx");
+	printf("\n");
 }
 
 int main(int argc, char *argv[])
@@ -66,6 +74,7 @@ int main(int argc, char *argv[])
 	int ntimes;
 	char *buf;
 	struct myts ts;
+	struct mynl_cmd *cmd;
 	
 	if (argc < 2) {
 		printf("Using %d times for the netlink test \n", NTIMES);
@@ -104,31 +113,34 @@ int main(int argc, char *argv[])
 	msg.msg_namelen = sizeof(dest_addr);
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
+	
+	cmd = (struct mynl_cmd *) NLMSG_DATA(nlh);
 
 	/* Read message from kernel */
 	for(i = 0 ; i < ntimes ; i++) {
-		printf("Copying buffer... \n");
 		if (i % 2 == 0)
-			strcpy(NLMSG_DATA(nlh), "GETTS_TX");
+			cmd->cmd = MYNL_CMD_GETTS_TX;
 		else
-			strcpy(NLMSG_DATA(nlh), "GETTS_RX");
+			cmd->cmd = MYNL_CMD_GETTS_RX;
 			
 		nlh->nlmsg_pid = getpid();
-		printf("Sending buffer... \n");
 		sendmsg(sock_fd,&msg, 0); //MSG_DONTWAIT);
-		printf("Receiving buffer... \n");
-		recvmsg(sock_fd, &msg, 0); //lMSG_DONTWAIT);
-		buf = (char *)NLMSG_DATA(nlh);
-		printf("Received message payload: %s\n", buf);
+		recvmsg(sock_fd, &msg, 0); //MSG_DONTWAIT);
 		
-		if (strcmp(buf,"ERROR") && strcmp(buf,"QUEUE EMPTY")) {
-			sscanf(buf, "%lu:%lu:%lu:%lu:v%d:t%d:s%lu",
-				&ts.hour, &ts.min, &ts.sec, 
-				&ts.nsec, &ts.valid, 
-				&ts.tx_rx, &ts.seq);
-			printf_myts(&ts);
+		cmd = (struct mynl_cmd *) NLMSG_DATA(nlh);
+		
+		if (cmd->cmd == MYNL_CMD_OK_RESP) {
+			printf_myts(&(cmd->ts));
+		} else if (cmd->cmd == MYNL_CMD_QEMPTY_RESP) {
+			printf("\n\n");
+			printf("Queue empty.\n");
+			printf("\n");
+		} else if (cmd->cmd == MYNL_CMD_QERROR_RESP) {
+			printf("\n\n");
+			printf("Queue error.\n");
+			printf("\n");
 		}
-		sleep(1);
+		//sleep(1);
 	}
 	
 	free((void *) nlh);

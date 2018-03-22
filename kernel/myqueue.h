@@ -25,6 +25,17 @@ struct myqueue {
 	spinlock_t lock;
 };
 
+#define MYNL_CMD_GETTS_TX 0
+#define MYNL_CMD_GETTS_RX 1
+#define MYNL_CMD_OK_RESP 2
+#define MYNL_CMD_QEMPTY_RESP 3
+#define MYNL_CMD_QERROR_RESP 4
+
+struct mynl_cmd {
+	int cmd;
+	struct myts ts;
+};
+
 struct myqueue_element * kmalloc_qe(struct timespec *ts, 
 	int valid, int tx_rx, u64 seq);
 void queue_init(struct myqueue *q);
