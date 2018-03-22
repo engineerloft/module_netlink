@@ -1,192 +1,162 @@
-/* 
- * This file is part of the module_netlink project 
- * (https://github.com/engineerloft/module_netlink).
- * Copyright (c) 2018 Engineer Loft.
- * 
- * This program is free software: you can redistribute it and/or modify  
- * it under the terms of the GNU General Public License as published by  
- * the Free Software Foundation, version 3.
- *
- * This program is distributed in the hope that it will be useful, but 
- * WITHOUT ANY WARRANTY; without even the implied warranty of 
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License 
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
-*/
-
+#include <net/netlink.h>
+#include <net/genetlink.h>
 #include <linux/module.h>
-#include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/kernel.h>
-#include <linux/timer.h>
-#include <linux/time.h>
-#include <linux/jiffies.h>
-#include <net/sock.h>
-#include <linux/netlink.h>
-#include <linux/skbuff.h>
 
-#include "myqueue.h"
-  
-#define NETLINK_CUSTOM_PROTO 31
+//Code based on 
+//http://people.ee.ethz.ch/~arkeller/linux/multi/kernel_user_space_howto-3.html
 
-#define TIMER_PERIOD 1*HZ
-#define TX_TS_PERIOD 5
-#define RX_TS_PERIOD 5
-static int mytimer_events = 0;
-static u64 tx_seq = 0;
-static u64 rx_seq = 0;
-static void mytimer_handler(unsigned long data);
-DEFINE_TIMER(mytimer, mytimer_handler, 0, 0);
+/* attributes (variables):
+ * the index in this enum is used as a reference for the type,
+ * userspace application has to indicate the corresponding type
+ * the policy is used for security considerations 
+ */
+enum {
+	DOC_EXMPL_A_UNSPEC,
+	DOC_EXMPL_A_MSG,
+	__DOC_EXMPL_A_MAX,
+};
+#define DOC_EXMPL_A_MAX (__DOC_EXMPL_A_MAX - 1)
 
-struct sock *nl_sk = NULL;
-struct timespec ts_current;
+/* attribute policy: defines which attribute has which type (e.g int, char * etc)
+ * possible values defined in net/netlink.h 
+ */
+static struct nla_policy doc_exmpl_genl_policy[DOC_EXMPL_A_MAX + 1] = {
+	[DOC_EXMPL_A_MSG] = { .type = NLA_NUL_STRING },
+};
 
-static struct myqueue rx_queue;
-static struct myqueue tx_queue;
+#define VERSION_NR 1
+//family definition
+static struct genl_family doc_exmpl_gnl_family = {
+	//.id = GENL_ID_GENERATE,         //Genetlink should generate an id
+	.hdrsize = 0,
+	.name = "CONTROL_EXMPL",        //The name of this family, used by userspace application
+	.version = VERSION_NR,          //Version number  
+	.maxattr = DOC_EXMPL_A_MAX,
+};
 
-static void myprintk_ts(struct timespec *ts)
-{
-	printk("%.2lu:%.2lu:%.2lu:%.6lu \n",
-		(ts->tv_sec / 3600) % (24),
-		(ts->tv_sec / 60) % (60),
-		ts->tv_sec % 60,
-		ts->tv_nsec / 1000);
-}
+/* commands: enumeration of all commands (functions), 
+ * used by userspace application to identify command to be executed
+ */
+enum {
+	DOC_EXMPL_C_UNSPEC,
+	DOC_EXMPL_C_ECHO,
+	__DOC_EXMPL_C_MAX,
+};
+#define DOC_EXMPL_C_MAX (__DOC_EXMPL_C_MAX - 1)
 
-static void mytimer_handler(unsigned long data)
-{
-		struct myqueue_element *qe = NULL;
-		
-		getnstimeofday(&ts_current);
-
-		if (mytimer_events % TX_TS_PERIOD == 0) {
-			qe = kmalloc_qe(&ts_current, 1, 0, tx_seq);
-			enqueue(&tx_queue, qe);
-			tx_seq++;
+//An echo command, receives a message, prints it and sends another message back
+int doc_exmpl_echo(struct sk_buff *skb_2, struct genl_info *info) {
+	struct nlattr *na;
+	struct sk_buff *skb;
+	int rc;
+	void *msg_head;
+	char * mydata;
+	
+	if (info == NULL) {
+		goto out;
+	}
+	
+	/* For each attribute there is an index in info->attrs which points to a nlattr structure
+	 * in this structure the data is given
+	 */
+	 na = info->attrs[DOC_EXMPL_A_MSG];
+	 if (na) {
+		mydata = (char *)nla_data(na);
+		if (mydata == NULL) {
+			 printk("error while receiving data\n");
+		} else {
+			printk("received: %s\n", mydata);
 		}
-			
-		if (mytimer_events % RX_TS_PERIOD == 0) {
-			qe = kmalloc_qe(&ts_current, 1, 1, rx_seq);
-			enqueue(&rx_queue, qe);
-			rx_seq++;
-		}
-		
-		mytimer_events++;
-
-		mod_timer(&mytimer, jiffies + TIMER_PERIOD);
-}
-
-#define MSG_SIZE_MAX 512
-static void netlink_f_recv_msg(struct sk_buff *skb)
-{
-	struct nlmsghdr *nlh;
-	int pid;
-	struct sk_buff *skb_out;
-	int res;
-	int msg_size;
-	struct mynl_cmd *cmd = NULL;
-	int rx_queue_cmd = 0;
-	int tx_queue_cmd = 0;
-	int queue_cmd = 0;
-
-	msg_size = MSG_SIZE_MAX;
-	nlh = (struct nlmsghdr*)skb->data;
-	pid = nlh->nlmsg_pid; /*pid of sending process */
-	
-	cmd = (struct mynl_cmd *) nlmsg_data(nlh);
-	
-	rx_queue_cmd = (cmd->cmd == MYNL_CMD_GETTS_RX);
-	tx_queue_cmd = (cmd->cmd == MYNL_CMD_GETTS_TX);
-	queue_cmd = rx_queue_cmd || tx_queue_cmd;
-	
-	if (queue_cmd) {
-			struct myqueue_element *qe = NULL;
-			
-			if(rx_queue_cmd) {
-				if (!is_queue_empty(&rx_queue)) {
-					qe = dequeue(&rx_queue);
-					cmd->ts = qe->ts;
-					cmd->cmd = MYNL_CMD_OK_RESP;
-				} else {
-					cmd->cmd = MYNL_CMD_QEMPTY_RESP;
-				}
-			}
-			else {
-				if (!is_queue_empty(&tx_queue)) {
-					qe = dequeue(&tx_queue);
-					cmd->ts = qe->ts;
-					cmd->cmd = MYNL_CMD_OK_RESP;
-				} else {
-					cmd->cmd = MYNL_CMD_QEMPTY_RESP;
-				}
-			}
-			
-			kfree(qe);
 	} else {
-		cmd->cmd = MYNL_CMD_QERROR_RESP;
-	}
-
-	/* Send the msg from kernel to the user */
-	skb_out = nlmsg_new(msg_size, 0);
-	if (!skb_out) {
-		pr_err("Failed to allocate new skb\n");
-		return;
-	}
-
-	nlh = nlmsg_put(skb_out, 0, 0, NLMSG_DONE, msg_size, 0);  
-	NETLINK_CB(skb_out).dst_group = 0; /* not in mcast group */
-	memcpy(nlmsg_data(nlh), cmd, msg_size);
-
-	res = nlmsg_unicast(nl_sk, skb_out, pid);
-	if (res)
-		pr_err("Error while sending back to user\n");
-}
-
-static int __init netlink_module_init(void) 
-{
-	struct netlink_kernel_cfg cfg = {
-		.input = netlink_f_recv_msg,
-	};
-	
-	getnstimeofday(&ts_current);
-	
-	pr_info("%s: Initializing... \n",__func__);
-	myprintk_ts(&ts_current);
-
-	nl_sk = 
-		netlink_kernel_create(&init_net, 
-			NETLINK_CUSTOM_PROTO, &cfg);
-	if(!nl_sk)
-	{
-		pr_err("%s: Error creating netlink socket.\n", 
-			__func__);
-		return -1;
-
+		printk("no info->attrs %i\n", DOC_EXMPL_A_MSG);
 	}
 	
-	queue_init(&rx_queue);
-	queue_init(&tx_queue);
+	//Send a message back
+	//Allocate some memory, since the size is not yet known use NLMSG_GOODSIZE
+	skb = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
+	if (skb == NULL) {
+		goto out;
+	}
 	
-	mod_timer(&mytimer, jiffies+TIMER_PERIOD);
-
+	//Create the message headers
+	/* arguments of genlmsg_put: 
+	 * struct sk_buff *, 
+	 * int (sending) pid, 
+	 * int sequence number, 
+	 * struct genl_family *, 
+	 * int flags, 
+	 * u8 command index (why do we need this?)
+	 * */
+	 
+	msg_head = genlmsg_put(skb, 0, info->snd_seq+1, &doc_exmpl_gnl_family, 0, DOC_EXMPL_C_ECHO);
+	if (msg_head == NULL) {
+		rc = -ENOMEM;
+		goto out;
+	}
+	
+	//Add a DOC_EXMPL_A_MSG attribute (actual value to be sent)
+	rc = nla_put_string(skb, DOC_EXMPL_A_MSG, "Hello World from kernel space");
+	if (rc != 0) {
+		goto out;
+	}
+	
+	//Finalize the message
+	genlmsg_end(skb, msg_head);
+	
+	//Send the message back
+	rc = genlmsg_unicast(genl_info_net(info), skb,info->snd_portid );
+	if (rc != 0) {
+		goto out;
+	}
+	return 0;
+out:
+	printk("An error occured in doc_exmpl_echo:\n");
 	return 0;
 }
 
-static void __exit netlink_module_exit(void) 
-{	
-	getnstimeofday(&ts_current);
-	pr_info("%s: Exiting... \n",__func__);
-	myprintk_ts(&ts_current);
-	del_timer(&mytimer);
-	netlink_kernel_release(nl_sk);
+//Commands: mapping between the command enumeration and the actual function
+struct genl_ops doc_exmpl_gnl_ops_echo = {
+	.cmd = DOC_EXMPL_C_ECHO,
+	.flags = 0,
+	.policy = doc_exmpl_genl_policy,
+	.doit = doc_exmpl_echo,
+	.dumpit = NULL,
+};
+
+static int __init module_netlink_init(void) {
+	int rc;
+	struct genl_ops * ops = &doc_exmpl_gnl_ops_echo;
+	printk("Generic Netlink Example Module inserted.\n");
 	
-	kfree_queue(&rx_queue);
-	kfree_queue(&tx_queue);
+	// Fill the family ops
+	doc_exmpl_gnl_family.ops = ops;
+	doc_exmpl_gnl_family.n_ops = 1;
+	doc_exmpl_gnl_family.mcgrps = NULL;
+	doc_exmpl_gnl_family.n_mcgrps = 0;
+	
+	// Register the family
+	rc = genl_register_family(&doc_exmpl_gnl_family);
+	if (rc != 0) {
+		goto failure;
+	}
+	return 0; 
+failure:
+	printk("An error occured while inserting the generic netlink example module\n");
+	return -1;
 }
 
-module_init(netlink_module_init); 
-module_exit(netlink_module_exit);
+static void __exit module_netlink_exit(void) {
+	int ret;
+	printk("Generic Netlink Example Module unloaded.\n");
+	
+	//Unregister the family
+	ret = genl_unregister_family(&doc_exmpl_gnl_family);
+	if(ret !=0) {
+		printk("Unregister family %i\n",ret);
+	}
+}
 
+module_init(module_netlink_init);
+module_exit(module_netlink_exit);
 MODULE_LICENSE("GPL");
