@@ -135,26 +135,26 @@ int doc_exmpl_getts(struct sk_buff *skb_2, struct genl_info *info) {
 	queue_cmd = rx_queue_cmd || tx_queue_cmd;
 	
 	if (queue_cmd) {
-			struct myqueue_element *qe = NULL;
+		struct myqueue_element *qe = NULL;
 			
-			if(rx_queue_cmd) {
-				if (!is_queue_empty(&rx_queue)) {
-					qe = dequeue(&rx_queue);
-					ts = qe->ts;
-				} else {
-					ts.type = 2;
-				}
+		if(rx_queue_cmd) {
+			if (!is_queue_empty(&rx_queue)) {
+				qe = dequeue(&rx_queue);
+				ts = qe->ts;
+			} else {
+				ts.type = 2;
 			}
-			else {
-				if (!is_queue_empty(&tx_queue)) {
-					qe = dequeue(&tx_queue);
-					ts = qe->ts;
-				} else {
-					ts.type = 2;
-				}
+		}
+		else {
+			if (!is_queue_empty(&tx_queue)) {
+				qe = dequeue(&tx_queue);
+				ts = qe->ts;
+			} else {
+				ts.type = 2;
 			}
+		}
 			
-			kfree(qe);
+		kfree(qe);
 	}
 	
 	//Send a message back
