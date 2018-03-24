@@ -1,0 +1,3 @@
+[submodule "lib/libnl"]
+	path = lib/libnl
+	url = https://github.com/thom311/libnl.git

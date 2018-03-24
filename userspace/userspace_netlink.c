@@ -12,45 +12,14 @@
 #include <sys/types.h>
 #include <signal.h>
 
+#include <linux/netlink.h>
 #include <linux/genetlink.h>
 
-//Code based on 
-//http://people.ee.ethz.ch/~arkeller/linux/multi/kernel_user_space_howto-3.html
-
-/* Generic macros for dealing with netlink sockets. Might be duplicated
- * elsewhere. It is recommended that commercial grade applications use
- * libnl or libnetlink and use the interfaces provided by the library
- */
-#define GENLMSG_DATA(glh) ((void *)(NLMSG_DATA(glh) + GENL_HDRLEN))
-#define GENLMSG_PAYLOAD(glh) (NLMSG_PAYLOAD(glh, 0) - GENL_HDRLEN)
-#define NLA_DATA(na) ((void *)((char*)(na) + NLA_HDRLEN))
+#include <netlink/socket.h>
+#include <netlink/genl/genl.h>
+#include <netlink/cli/utils.h>
 
 #define NTIMES 100
-
-//Variables used for netlink
-
-//netlink socket's file descriptor
-int nl_fd;
-
-//netlink socket address
-struct sockaddr_nl nl_address; 
-
-//The family ID resolved by the netlink controller for 
-// this userspace program
-int nl_family_id;
-
-//Number of bytes sent or received via send() or recv()
-int nl_rxtx_length;
-
-//pointer to netlink attributes structure within the payload
-struct nlattr *nl_na; 
-
-//memory for netlink request and response messages - headers are included
-struct { 
-	struct nlmsghdr n;
-	struct genlmsghdr g;
-	char buf[256];
-} nl_request_msg, nl_response_msg;
 
 struct myts {
 		uint64_t hour;
@@ -75,13 +44,41 @@ void printf_myts(struct myts *ts)
 	printf("================================== \n");
 }
 
+static int callback(struct nl_msg *msg, void *arg) {
+	struct nlmsghdr *nlh = nlmsg_hdr(msg);
+    struct nlattr *attr[2];
+    char *buf;
+    int err;
+    struct myts ts;
+    
+    err = genlmsg_parse(nlh, 0, attr, 1, NULL);
+    if(err != 0)
+		printf("ERROR %d: Unable to parse NL attributes \n", err);
+		
+	buf = nla_get_string(attr[1]);
+    
+    if (strcmp(buf,"ERROR") && strcmp(buf,"QUEUE EMPTY")) {
+		sscanf(buf, "%lu:%lu:%lu:%lu:v%d:t%d:s%lu",
+			&ts.hour, &ts.min, &ts.sec, 
+			&ts.nsec, &ts.valid, 
+			&ts.tx_rx, &ts.seq);
+		printf_myts(&ts);
+	} else {
+		printf("%s\n",buf);
+	}
+
+    return NL_OK;
+}
+
 int main(int argc, char *argv[]) {
 
-	int ntimes;
-	int i;
-	char *buf;
-	char cmd[512];
-	struct myts ts;
+	struct nl_sock *nlsock;
+	struct nl_msg *msg;
+	int family_id;
+	void *p;
+	int err;
+	int i, ntimes;
+	char msg_buf[100];
 	
 	if (argc < 2) {
 		printf("Using %d times for the netlink test \n", NTIMES);
@@ -91,164 +88,66 @@ int main(int argc, char *argv[]) {
 		ntimes = strtol(argv[1],(char **) NULL, 10);
 	}
 	
-	//Step 1: Open the socket. Note that protocol = NETLINK_GENERIC
-	nl_fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
-	if (nl_fd < 0) {
-		perror("socket()");
+	nlsock = nl_socket_alloc();
+	if(!nlsock) {
+		perror("Creating socket...\n");
 		return -1;
 	}
 	
-	//Step 2: Bind the socket.
-	memset(&nl_address, 0, sizeof(nl_address));
-	nl_address.nl_family = AF_NETLINK;
-	nl_address.nl_groups = 0;
+	genl_connect(nlsock);
 	
-	if (bind(nl_fd, (struct sockaddr *) &nl_address, 
-		sizeof(nl_address)) < 0) {
-		perror("bind()");
-		close(nl_fd);
-		return -1;
+	family_id = genl_ctrl_resolve(nlsock,"HA_TS_FAMILY");
+	
+	nl_socket_disable_seq_check(nlsock);
+	
+	if((err = nl_socket_modify_cb(nlsock, NL_CB_VALID, 
+		NL_CB_CUSTOM, callback, NULL)) <  0 ) {
+		printf("ERROR: Unable to modify valid message callback \n");
+		goto out2;
 	}
 	
-	//Step 3. Resolve the family ID corresponding to "CONTROL_EXMPL"
-	//Populate the netlink header
-	nl_request_msg.n.nlmsg_type = GENL_ID_CTRL;
-	nl_request_msg.n.nlmsg_flags = NLM_F_REQUEST;
-	nl_request_msg.n.nlmsg_seq = 0;
-	nl_request_msg.n.nlmsg_pid = getpid();
-	nl_request_msg.n.nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
-	//Populate the payload's "family header" 
-	nl_request_msg.g.cmd = CTRL_CMD_GETFAMILY;
-	nl_request_msg.g.version = 0x1;
-	//Populate the payload's "netlink attributes"
-	nl_na = (struct nlattr *) GENLMSG_DATA(&nl_request_msg);
-	nl_na->nla_type = CTRL_ATTR_FAMILY_NAME;
-	nl_na->nla_len = strlen("HA_TS_FAMILY") + 1 + NLA_HDRLEN;
-	//Family name length can be upto 16 chars including \0
-	strcpy(NLA_DATA(nl_na), "HA_TS_FAMILY"); 
-	
-	nl_request_msg.n.nlmsg_len += NLMSG_ALIGN(nl_na->nla_len);
-	
-	memset(&nl_address, 0, sizeof(nl_address));
-	nl_address.nl_family = AF_NETLINK;
-	
-	//Send the family ID request message to the netlink controller
-	nl_rxtx_length = sendto(nl_fd, (char *) &nl_request_msg, 
-		nl_request_msg.n.nlmsg_len, 0, (struct sockaddr *) &nl_address, 
-		sizeof(nl_address));
-	if (nl_rxtx_length != nl_request_msg.n.nlmsg_len) {
-		perror("sendto()");
-		close(nl_fd);
-		return -1;
+	msg = nlmsg_alloc();
+	if(!msg) {
+		printf("ERROR: Unable to reserve memory \n");
+		goto out2;
+	}
+		
+	p = genlmsg_put(msg,0,0,family_id,0,0,1,1);
+	if(!p) {
+		printf("ERROR: Unable to initialize the header packet \n");
+		goto out1;
 	}
 	
-	//Wait for the response message
-	nl_rxtx_length = recv(nl_fd, &nl_response_msg, 
-		sizeof(nl_response_msg), 0);
-	if (nl_rxtx_length < 0) {
-		perror("recv()");
-		return -1;
-	}
-	
-	//Validate response message
-	if (!NLMSG_OK((&nl_response_msg.n), nl_rxtx_length)) {
-		fprintf(stderr, "family ID request : invalid message\n");
-		return -1;
-	}
-	if (nl_response_msg.n.nlmsg_type == NLMSG_ERROR) { //error
-		fprintf(stderr, "family ID request : receive error\n");
-		return -1;
-	}
-	
-	//Extract family ID
-	nl_na = (struct nlattr *) GENLMSG_DATA(&nl_response_msg);
-	nl_na = 
-		(struct nlattr *) ((char *) nl_na + NLA_ALIGN(nl_na->nla_len));
-	if (nl_na->nla_type == CTRL_ATTR_FAMILY_ID) {
-		nl_family_id = *(__u16 *) NLA_DATA(nl_na);
-	}
-	
-	//Step 4. Send own custom message
 	for(i = 0 ; i < ntimes ; i++) {
 		if (i % 2 == 0)
-			strcpy(cmd,"GETTS_TX");
+			strcpy(msg_buf,"GETTS_TX");
 		else
-			strcpy(cmd,"GETTS_RX");
+			strcpy(msg_buf,"GETTS_RX");
 			
-		memset(&nl_request_msg, 0, sizeof(nl_request_msg));
-		memset(&nl_response_msg, 0, sizeof(nl_response_msg));
-	
-		nl_request_msg.n.nlmsg_len = NLMSG_LENGTH(GENL_HDRLEN);
-		nl_request_msg.n.nlmsg_type = nl_family_id;
-		nl_request_msg.n.nlmsg_flags = NLM_F_REQUEST;
-		nl_request_msg.n.nlmsg_seq = 60;
-		nl_request_msg.n.nlmsg_pid = getpid();
-		nl_request_msg.g.cmd = 1; //corresponds to DOC_EXMPL_C_ECHO;
-	
-		nl_na = (struct nlattr *) GENLMSG_DATA(&nl_request_msg);
-		nl_na->nla_type = 1; // corresponds to DOC_EXMPL_A_MSG
-		nl_na->nla_len = sizeof(cmd)+NLA_HDRLEN; //Message length
-		memcpy(NLA_DATA(nl_na), cmd, sizeof(cmd));
-		nl_request_msg.n.nlmsg_len += NLMSG_ALIGN(nl_na->nla_len);
-	
-		memset(&nl_address, 0, sizeof(nl_address));
-		nl_address.nl_family = AF_NETLINK;
-	
-		//Send the custom message
-		nl_rxtx_length = sendto(nl_fd, (char *) &nl_request_msg, 
-			nl_request_msg.n.nlmsg_len, 0, 
-			(struct sockaddr *) &nl_address, sizeof(nl_address));
-		if (nl_rxtx_length != nl_request_msg.n.nlmsg_len) {
-			perror("sendto()");
-			close(nl_fd);
-			return -1;
-		}
-		printf("Sent to kernel: %s\n",cmd);
-	
-		//Receive reply from kernel
-		nl_rxtx_length = recv(nl_fd, &nl_response_msg, 
-			sizeof(nl_response_msg), 0);
-		if (nl_rxtx_length < 0) {
-			perror("recv()");
-			return -1;
+		if((err = nla_put_string(msg,1,msg_buf)) < 0) {
+			printf("ERROR: Unable to add the string \n");
+			goto out1;
 		}
 	
-		//Validate response message
-		if (nl_response_msg.n.nlmsg_type == NLMSG_ERROR) { //Error
-			printf("Error while receiving reply from kernel: NACK Received\n");
-			close(nl_fd);
-			return -1;
+		if((err = nl_send_auto_complete(nlsock,msg)) < 0) {
+			printf("ERROR: Unable to send the msg \n");
+			goto out1;
 		}
 	
-		if (nl_rxtx_length < 0) {
-			printf("Error while receiving reply from kernel\n");
-			close(nl_fd);
-			return -1;
-		}
-		if (!NLMSG_OK((&nl_response_msg.n), nl_rxtx_length)) {
-			printf("Error while receiving reply from kernel: Invalid Message\n");
-			close(nl_fd);
-			return -1;
+		if((err = nl_recvmsgs_default(nlsock)) < 0) {
+			printf("ERROR %d: Unable to receive the msg \n",err);
+			goto out1;
 		}
 	
-		//Parse the reply message
-		nl_rxtx_length = GENLMSG_PAYLOAD(&nl_response_msg.n);
-		nl_na = (struct nlattr *) GENLMSG_DATA(&nl_response_msg);
-		printf("Kernel replied: %s\n",(char *)NLA_DATA(nl_na));
+		nl_wait_for_ack(nlsock);
 		
-		buf = (char *)NLA_DATA(nl_na);
-		
-		if (strcmp(buf,"ERROR") && strcmp(buf,"QUEUE EMPTY")) {
-			sscanf(buf, "%lu:%lu:%lu:%lu:v%d:t%d:s%lu",
-				&ts.hour, &ts.min, &ts.sec, 
-				&ts.nsec, &ts.valid, 
-				&ts.tx_rx, &ts.seq);
-			printf_myts(&ts);
-		}
-		sleep(1);
+		//sleep(1);
 	}
 	
-	//Step 5. Close the socket and quit
-	close(nl_fd);
+out1:
+	nlmsg_free(msg);
+out2:
+	nl_socket_free(nlsock);
+	
 	return 0;
 }
