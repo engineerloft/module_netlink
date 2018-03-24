@@ -8,11 +8,11 @@
 #include <linux/time.h>
 
 struct myts {
+		int type;
 		u64 sec;
 		u64 nsec;
 		u64 seq;
 		int valid;
-		int tx_rx;
 };
 
 struct myqueue_element {
@@ -37,7 +37,7 @@ struct mynl_cmd {
 };
 
 struct myqueue_element * kmalloc_qe(struct timespec *ts, 
-	int valid, int tx_rx, u64 seq);
+	int valid, int type, u64 seq);
 void queue_init(struct myqueue *q);
 int enqueue(struct myqueue *q, struct myqueue_element *qe);
 struct myqueue_element *dequeue(struct myqueue *q);

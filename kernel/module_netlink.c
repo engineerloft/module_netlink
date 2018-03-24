@@ -10,6 +10,7 @@
 #include <linux/skbuff.h>
 
 #include "myqueue.h"
+#include "mnlattr.h"
 
 //Code based on 
 //http://people.ee.ethz.ch/~arkeller/linux/multi/kernel_user_space_howto-3.html
@@ -60,23 +61,19 @@ static void mytimer_handler(unsigned long data)
 		mod_timer(&mytimer, jiffies + TIMER_PERIOD);
 }
 
-/* attributes (variables):
- * the index in this enum is used as a reference for the type,
- * userspace application has to indicate the corresponding type
- * the policy is used for security considerations 
- */
-enum {
-	DOC_EXMPL_A_UNSPEC,
-	DOC_EXMPL_A_MSG,
-	__DOC_EXMPL_A_MAX,
-};
-#define DOC_EXMPL_A_MAX (__DOC_EXMPL_A_MAX - 1)
-
 /* attribute policy: defines which attribute has which type (e.g int, char * etc)
  * possible values defined in net/netlink.h 
  */
 static struct nla_policy doc_exmpl_genl_policy[DOC_EXMPL_A_MAX + 1] = {
-	[DOC_EXMPL_A_MSG] = { .type = NLA_NUL_STRING },
+	[DOC_EXMPL_A_TS_NESTED] = { .type = NLA_NESTED },
+};
+
+static struct nla_policy doc_exmpl_genl_nested_policy[DOC_EXMPL_A_TS_NESTED_MAX + 1] = {
+	[DOC_EXMPL_A_TS_NESTED_SEC] = { .type = NLA_U64 },
+	[DOC_EXMPL_A_TS_NESTED_NSEC] = { .type = NLA_U64 },
+	[DOC_EXMPL_A_TS_NESTED_SEQ] = { .type = NLA_U64 },
+	[DOC_EXMPL_A_TS_NESTED_VALID] = { .type = NLA_U32 },
+	[DOC_EXMPL_A_TS_NESTED_TYPE] = { .type = NLA_U32 },
 };
 
 #define VERSION_NR 1
@@ -99,46 +96,42 @@ enum {
 };
 #define DOC_EXMPL_C_MAX (__DOC_EXMPL_C_MAX - 1)
 
-#define MSG_SIZE_MAX 512
 int doc_exmpl_getts(struct sk_buff *skb_2, struct genl_info *info) {
-	struct nlattr *na;
 	struct sk_buff *skb;
 	int rc;
 	void *msg_head;
-	char * mydata;
-	int msg_size;
-	char msg[MSG_SIZE_MAX];
-	char *error_string = "ERROR";
-	char *queue_empty = "QUEUE EMPTY";
+	u32 cmd = 0;
 	int rx_queue_cmd = 0;
 	int tx_queue_cmd = 0;
 	int queue_cmd = 0;
-	
-	msg_size = MSG_SIZE_MAX;
+	struct myts ts;
+	struct nlattr *na;
+	struct nlattr *nested[DOC_EXMPL_A_TS_NESTED_MAX+1];
 	
 	if (info == NULL) {
 		goto out;
 	}
+
+	na = info->attrs[DOC_EXMPL_A_TS_NESTED];
+	rc = nla_parse_nested(nested, DOC_EXMPL_A_TS_NESTED_MAX, na, 
+		doc_exmpl_genl_nested_policy);
 	
-	/* For each attribute there is an index in info->attrs which points to a nlattr structure
-	 * in this structure the data is given
-	 */
-	 na = info->attrs[DOC_EXMPL_A_MSG];
-	 if (na) {
-		mydata = (char *)nla_data(na);
-		if (mydata == NULL) {
-			 printk("error while receiving data\n");
-			 goto out;
-		} else {
-			printk("received: %s\n", mydata);
-		}
-	} else {
-		printk("no info->attrs %i\n", DOC_EXMPL_A_MSG);
+	if(!nested[DOC_EXMPL_A_TS_NESTED_TYPE]) {
 		goto out;
 	}
 	
-	rx_queue_cmd = !strcmp("GETTS_RX",mydata);
-	tx_queue_cmd = !strcmp("GETTS_TX",mydata);
+	na = nested[DOC_EXMPL_A_TS_NESTED_TYPE];
+	
+	cmd = nla_get_u32(na);
+	
+	ts.sec = 0;
+	ts.nsec = 0;
+	ts.seq = 0;
+	ts.valid = 0;
+	ts.type = 3;
+	
+	rx_queue_cmd = (cmd == 1);
+	tx_queue_cmd = (cmd == 0);
 	queue_cmd = rx_queue_cmd || tx_queue_cmd;
 	
 	if (queue_cmd) {
@@ -147,28 +140,26 @@ int doc_exmpl_getts(struct sk_buff *skb_2, struct genl_info *info) {
 			if(rx_queue_cmd) {
 				if (!is_queue_empty(&rx_queue)) {
 					qe = dequeue(&rx_queue);
-					sprintf_ts(msg,qe);
+					ts = qe->ts;
 				} else {
-					strcpy(msg,queue_empty);
+					ts.type = 2;
 				}
 			}
 			else {
 				if (!is_queue_empty(&tx_queue)) {
 					qe = dequeue(&tx_queue);
-					sprintf_ts(msg,qe);
+					ts = qe->ts;
 				} else {
-					strcpy(msg,queue_empty);
+					ts.type = 2;
 				}
 			}
 			
 			kfree(qe);
-	} else {
-		strcpy(msg,error_string);
 	}
 	
 	//Send a message back
 	//TRICK: If you dont know the size, use NLMSG_GOODSIZE
-	skb = genlmsg_new(msg_size, GFP_KERNEL);
+	skb = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
 	if (skb == NULL) {
 		goto out;
 	}
@@ -190,11 +181,55 @@ int doc_exmpl_getts(struct sk_buff *skb_2, struct genl_info *info) {
 		goto out;
 	}
 	
-	//Add a DOC_EXMPL_A_MSG attribute (actual value to be sent)
-	rc = nla_put_string(skb, DOC_EXMPL_A_MSG, msg);
-	if (rc != 0) {
+	// Nested
+	//int type;
+	//u64 sec;
+	//u64 nsec;
+	//u64 seq;
+	//int valid;
+	
+	na = nla_nest_start(skb, 
+		DOC_EXMPL_A_TS_NESTED);
+	if(!na) {
 		goto out;
 	}
+	
+	rc = nla_put_u32(skb,DOC_EXMPL_A_TS_NESTED_TYPE,
+		(u32) ts.type);
+	if (rc != 0) {
+		nla_nest_cancel(skb,na);
+		goto out;
+	}
+	
+	rc = nla_put_u64(skb,DOC_EXMPL_A_TS_NESTED_SEC,
+		(u64) ts.sec);
+	if (rc != 0) {
+		nla_nest_cancel(skb,na);
+		goto out;
+	}
+	
+	rc = nla_put_u64(skb,DOC_EXMPL_A_TS_NESTED_NSEC,
+		(u64) ts.nsec);
+	if (rc != 0) {
+		nla_nest_cancel(skb,na);
+		goto out;
+	}
+	
+	rc = nla_put_u64(skb,DOC_EXMPL_A_TS_NESTED_SEQ,
+		(u64) ts.seq);
+	if (rc != 0) {
+		nla_nest_cancel(skb,na);
+		goto out;
+	}
+	
+	rc = nla_put_u32(skb,DOC_EXMPL_A_TS_NESTED_VALID,
+		(u32) ts.valid);
+	if (rc != 0) {
+		nla_nest_cancel(skb,na);
+		goto out;
+	}
+	
+	nla_nest_end(skb, na);
 	
 	//Finalize the message
 	genlmsg_end(skb, msg_head);
@@ -204,9 +239,10 @@ int doc_exmpl_getts(struct sk_buff *skb_2, struct genl_info *info) {
 	if (rc != 0) {
 		goto out;
 	}
+	
 	return 0;
 out:
-	printk("An error occured in doc_exmpl_echo:\n");
+	printk("An error occured in generic netlink callback. \n");
 	return 0;
 }
 

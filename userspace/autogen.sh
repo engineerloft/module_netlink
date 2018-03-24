@@ -9,7 +9,7 @@ cd ../lib/libnl
 cd ${cdir}
 echo -e "all:" > Makefile
 echo -e "\tmake -C ../lib/libnl" >> Makefile
-echo -e "\tgcc  -o userspace_netlink.run userspace_netlink.c -I../lib/libnl/include -L../lib/libnl/lib/.libs -l:libnl-3.a -l:libnl-genl-3.a -lpthread -lm" >> Makefile
+echo -e "\tgcc  -o userspace_netlink.run userspace_netlink.c -I../lib/libnl/include -I../kernel -L../lib/libnl/lib/.libs -l:libnl-3.a -l:libnl-genl-3.a -lpthread -lm" >> Makefile
 echo -e ""	>> Makefile
 echo -e "clean:" >> Makefile
 echo -e "\tmake -C ../lib/libnl clean" >> Makefile

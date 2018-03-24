@@ -1,7 +1,7 @@
 #include "myqueue.h"
 
 struct myqueue_element * kmalloc_qe(struct timespec *ts, 
-	int valid, int tx_rx, u64 seq)
+	int valid, int type, u64 seq)
 {
 	struct myqueue_element *qe = NULL;
 	
@@ -13,7 +13,7 @@ struct myqueue_element * kmalloc_qe(struct timespec *ts,
 	(qe->ts).sec = ts->tv_sec;
 	(qe->ts).nsec = ts->tv_nsec;
 	(qe->ts).valid = valid;
-	(qe->ts).tx_rx = tx_rx;
+	(qe->ts).type = type;
 	(qe->ts).seq = seq;
 	
 	return qe;
@@ -75,6 +75,6 @@ void sprintf_ts(char *buf, struct myqueue_element *qe)
 				qe->ts.sec % 60,
 				qe->ts.nsec / 1000,
 				qe->ts.valid,
-				qe->ts.tx_rx,
+				qe->ts.type,
 				qe->ts.seq);
 }

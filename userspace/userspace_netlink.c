@@ -19,52 +19,66 @@
 #include <netlink/genl/genl.h>
 #include <netlink/cli/utils.h>
 
+#include "mnlattr.h"
+
 #define NTIMES 100
 
 struct myts {
-		uint64_t hour;
-		uint64_t min;
 		uint64_t sec;
 		uint64_t nsec;
 		uint64_t seq;
 		int valid;
-		int tx_rx;
+		int type;
 };
 
 void printf_myts(struct myts *ts)
 {
 	printf("============== TS ================ \n");
-	printf("Hour: %lu \n", ts->hour);
-	printf("Min: %lu \n", ts->min);
 	printf("Sec: %lu \n", ts->sec);
 	printf("Nsec: %lu \n", ts->nsec);
 	printf("Valid: %d \n", ts->valid);
-	printf("TX_RX: %s \n", (ts->tx_rx == 0) ? "Tx" : "Rx");
+	printf("TX_RX: %s \n", (ts->type == 0) ? "Tx" : "Rx");
 	printf("Seq: %lu \n", ts->seq);
 	printf("================================== \n");
 }
 
+static struct nla_policy nested_policy[DOC_EXMPL_A_TS_NESTED_MAX + 1] = 
+{
+	[DOC_EXMPL_A_TS_NESTED_SEC] = { .type = NLA_U64 },
+	[DOC_EXMPL_A_TS_NESTED_NSEC] = { .type = NLA_U64 },
+	[DOC_EXMPL_A_TS_NESTED_SEQ] = { .type = NLA_U64 },
+	[DOC_EXMPL_A_TS_NESTED_VALID] = { .type = NLA_U32 },
+	[DOC_EXMPL_A_TS_NESTED_TYPE] = { .type = NLA_U32 },
+};
+
 static int callback(struct nl_msg *msg, void *arg) {
 	struct nlmsghdr *nlh = nlmsg_hdr(msg);
-    struct nlattr *attr[2];
+    struct nlattr *attr[DOC_EXMPL_A_MAX+1];
+    struct nlattr *nested[DOC_EXMPL_A_TS_NESTED_MAX+1];
     char *buf;
     int err;
     struct myts ts;
     
-    err = genlmsg_parse(nlh, 0, attr, 1, NULL);
+    err = genlmsg_parse(nlh, 0, attr, DOC_EXMPL_A_MAX, NULL);
     if(err != 0)
 		printf("ERROR %d: Unable to parse NL attributes \n", err);
 		
-	buf = nla_get_string(attr[1]);
+	nla_parse_nested(nested,DOC_EXMPL_A_TS_NESTED_MAX,
+		attr[DOC_EXMPL_A_TS_NESTED],nested_policy);
+		
+	ts.sec = nla_get_u64(nested[DOC_EXMPL_A_TS_NESTED_SEC]);
+	ts.nsec = nla_get_u64(nested[DOC_EXMPL_A_TS_NESTED_NSEC]);
+	ts.seq = nla_get_u64(nested[DOC_EXMPL_A_TS_NESTED_SEQ]);
+	ts.valid = nla_get_u32(nested[DOC_EXMPL_A_TS_NESTED_VALID]);
+	ts.type = nla_get_u32(nested[DOC_EXMPL_A_TS_NESTED_TYPE]);
     
-    if (strcmp(buf,"ERROR") && strcmp(buf,"QUEUE EMPTY")) {
-		sscanf(buf, "%lu:%lu:%lu:%lu:v%d:t%d:s%lu",
-			&ts.hour, &ts.min, &ts.sec, 
-			&ts.nsec, &ts.valid, 
-			&ts.tx_rx, &ts.seq);
+    if (ts.type != 2 && ts.type != 3) {
 		printf_myts(&ts);
 	} else {
-		printf("%s\n",buf);
+		if (ts.type == 2)
+			printf("QUEUE EMPTY.\n");
+		else
+			printf("QUEUE ERROR.\n");
 	}
 
     return NL_OK;
@@ -78,7 +92,8 @@ int main(int argc, char *argv[]) {
 	void *p;
 	int err;
 	int i, ntimes;
-	char msg_buf[100];
+    uint32_t tx_rx;
+	struct nlattr *nested;
 	
 	if (argc < 2) {
 		printf("Using %d times for the netlink test \n", NTIMES);
@@ -106,28 +121,67 @@ int main(int argc, char *argv[]) {
 		goto out2;
 	}
 	
-	msg = nlmsg_alloc();
-	if(!msg) {
-		printf("ERROR: Unable to reserve memory \n");
-		goto out2;
-	}
-		
-	p = genlmsg_put(msg,0,0,family_id,0,0,1,1);
-	if(!p) {
-		printf("ERROR: Unable to initialize the header packet \n");
-		goto out1;
-	}
-	
 	for(i = 0 ; i < ntimes ; i++) {
-		if (i % 2 == 0)
-			strcpy(msg_buf,"GETTS_TX");
-		else
-			strcpy(msg_buf,"GETTS_RX");
-			
-		if((err = nla_put_string(msg,1,msg_buf)) < 0) {
-			printf("ERROR: Unable to add the string \n");
+		msg = nlmsg_alloc();
+		if(!msg) {
+			printf("ERROR: Unable to reserve memory \n");
+			goto out2;
+		}
+		
+		p = genlmsg_put(msg,0,0,family_id,0,0,1,1);
+		if(!p) {
+			printf("ERROR: Unable to initialize the header packet \n");
 			goto out1;
 		}
+	
+		if (i % 2 == 0)
+			tx_rx = 0;
+		else
+			tx_rx = 1;
+			
+		nested = nla_nest_start(msg,DOC_EXMPL_A_TS_NESTED);
+		
+		if((err = nla_put_u32(msg,
+			DOC_EXMPL_A_TS_NESTED_TYPE,tx_rx)) < 0) {
+			printf("ERROR %d: Unable to add type nested attribute. \n",
+				err);
+			nla_nest_cancel(msg,nested);
+			goto out1;
+		}
+		
+		if((err = nla_put_u64(msg,
+			DOC_EXMPL_A_TS_NESTED_SEC,0)) < 0) {
+			printf("ERROR %d: Unable to add sec nested attribute. \n", 
+				err);
+			nla_nest_cancel(msg,nested);
+			goto out1;
+		}
+		
+		if((err = nla_put_u64(msg,
+			DOC_EXMPL_A_TS_NESTED_NSEC,0)) < 0) {
+			printf("ERROR %d: Unable to add nsec nested attribute. \n", 
+				err);
+			nla_nest_cancel(msg,nested);
+			goto out1;
+		}
+		
+		if((err = nla_put_u64(msg,
+			DOC_EXMPL_A_TS_NESTED_SEQ,0)) < 0) {
+			printf("ERROR %d: Unable to add seq nested attribute. \n", 
+				err);
+			nla_nest_cancel(msg,nested);
+			goto out1;
+		}
+		
+		if((err = nla_put_u32(msg,
+			DOC_EXMPL_A_TS_NESTED_VALID,0)) < 0) {
+			printf("ERROR %d: Unable to add valid nested attribute. \n", 
+				err);
+			nla_nest_cancel(msg,nested);
+			goto out1;
+		}
+		
+		nla_nest_end(msg,nested);
 	
 		if((err = nl_send_auto_complete(nlsock,msg)) < 0) {
 			printf("ERROR: Unable to send the msg \n");
@@ -142,10 +196,11 @@ int main(int argc, char *argv[]) {
 		nl_wait_for_ack(nlsock);
 		
 		//sleep(1);
+		
+out1:
+		nlmsg_free(msg);
 	}
 	
-out1:
-	nlmsg_free(msg);
 out2:
 	nl_socket_free(nlsock);
 	
