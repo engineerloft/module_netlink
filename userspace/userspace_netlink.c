@@ -149,38 +149,6 @@ int main(int argc, char *argv[]) {
 			goto out1;
 		}
 		
-		if((err = nla_put_u64(msg,
-			DOC_EXMPL_A_TS_NESTED_SEC,0)) < 0) {
-			printf("ERROR %d: Unable to add sec nested attribute. \n", 
-				err);
-			nla_nest_cancel(msg,nested);
-			goto out1;
-		}
-		
-		if((err = nla_put_u64(msg,
-			DOC_EXMPL_A_TS_NESTED_NSEC,0)) < 0) {
-			printf("ERROR %d: Unable to add nsec nested attribute. \n", 
-				err);
-			nla_nest_cancel(msg,nested);
-			goto out1;
-		}
-		
-		if((err = nla_put_u64(msg,
-			DOC_EXMPL_A_TS_NESTED_SEQ,0)) < 0) {
-			printf("ERROR %d: Unable to add seq nested attribute. \n", 
-				err);
-			nla_nest_cancel(msg,nested);
-			goto out1;
-		}
-		
-		if((err = nla_put_u32(msg,
-			DOC_EXMPL_A_TS_NESTED_VALID,0)) < 0) {
-			printf("ERROR %d: Unable to add valid nested attribute. \n", 
-				err);
-			nla_nest_cancel(msg,nested);
-			goto out1;
-		}
-		
 		nla_nest_end(msg,nested);
 	
 		if((err = nl_send_auto_complete(nlsock,msg)) < 0) {
