@@ -1,7 +1,9 @@
 KDIR := /lib/modules/$(shell uname -r)/build
 
-obj-m := mod_netlink.o
-mod_netlink-objs := module_netlink.o myqueue.o
+obj-m := mod_netlink.o mod_nl_ts.o
+mod_netlink-objs := module_netlink.o nl_ts_queue.o
+
+mod_nl_ts-objs := nl_ts_module.o nl_ts_queue.o
 
 all:
 	$(MAKE) -C $(KDIR) SUBDIRS=$(PWD) modules 
