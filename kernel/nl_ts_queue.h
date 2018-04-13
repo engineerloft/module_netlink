@@ -9,11 +9,9 @@
 #include <linux/time.h>
 #endif
 
-/* attributes (variables):
- * the index in this enum is used as a reference for the type,
- * userspace application has to indicate the corresponding type
- * the policy is used for security considerations 
- */
+#define IFNAME_SIZE 10
+#define VERSION_NR 1
+
 enum {
 	NL_TS_A_UNSPEC,
 	NL_TS_A_TS_NESTED,
@@ -74,9 +72,16 @@ enum {
 };
 #define NL_TS_A_CMD_NESTED_MAX (__NL_TS_A_CMD_NESTED_MAX - 1)
 
+enum {
+	NL_TS_C_UNSPEC,
+	NL_TS_C_GETTS,
+	__NL_TS_C_MAX,
+};
+#define NL_TS_C_MAX (__NL_TS_C_MAX - 1)
+
 struct nl_ts_cmd {
 	int cmd;
-	char *iface;
+	char iface[IFNAME_SIZE];
 };
 
 #ifdef __KERNEL__
@@ -92,7 +97,8 @@ struct nl_ts_queue {
 
 struct nl_ts_queue_element * nl_ts_queue_kmalloc(struct nl_ts *ts);
 void nl_ts_queue_init(struct nl_ts_queue *q);
-int nl_ts_queue_enqueue(struct nl_ts_queue *q, struct nl_ts_queue_element *qe);
+int nl_ts_queue_enqueue(struct nl_ts_queue *q, 
+	struct nl_ts_queue_element *qe);
 struct nl_ts_queue_element *nl_ts_queue_dequeue(struct nl_ts_queue *q);
 int nl_ts_queue_is_empty(struct nl_ts_queue *q);
 void nl_ts_queue_kfree(struct nl_ts_queue *q);

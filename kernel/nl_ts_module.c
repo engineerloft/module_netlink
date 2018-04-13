@@ -13,7 +13,6 @@
 
 #define N_NL_TS_SLOTS 256
 
-#define IFNAME_SIZE 10
 struct nl_ts_table_entry {
 	struct nl_ts_queue rx_queue;
 	struct nl_ts_queue tx_queue;
@@ -40,7 +39,6 @@ static struct nla_policy nl_ts_genl_cmd_nested_policy[NL_TS_A_CMD_NESTED_MAX + 1
 	[NL_TS_A_CMD_NESTED_IFACE] = { .type = NLA_NUL_STRING, .len = IFNAME_SIZE-1 },
 };
 
-#define VERSION_NR 1
 //family definition
 static struct genl_family nl_ts_gnl_family = {
 	//.id = GENL_ID_GENERATE,         //Genetlink should generate an id
@@ -49,16 +47,6 @@ static struct genl_family nl_ts_gnl_family = {
 	.version = VERSION_NR,          //Version number  
 	.maxattr = NL_TS_A_MAX,
 };
-
-/* commands: enumeration of all commands (functions), 
- * used by userspace application to identify command to be executed
- */
-enum {
-	NL_TS_C_UNSPEC,
-	NL_TS_C_GETTS,
-	__NL_TS_C_MAX,
-};
-#define NL_TS_C_MAX (__NL_TS_C_MAX - 1)
 
 static struct nl_ts_table_entry * nl_ts_table_entry_get(int desc)
 {
@@ -90,7 +78,6 @@ static int nl_ts_parse_skb(struct sk_buff *skb,
 {
 	int rc;
 	u32 cmd_code;
-	char *iface;
 	int iface_desc = -1;
 	struct nlattr *na;
 	struct nlattr *nested[NL_TS_A_CMD_NESTED_MAX+1];
@@ -113,15 +100,13 @@ static int nl_ts_parse_skb(struct sk_buff *skb,
 			cmd->cmd = cmd_code;
 			
 			na = nested[NL_TS_A_CMD_NESTED_IFACE];
-			nla_strlcpy(iface,na,IFNAME_SIZE);
+			nla_strlcpy(cmd->iface,na,IFNAME_SIZE);
 			
-			iface_desc = nl_ts_table_entry_get_by_ifname(iface);
+			iface_desc = nl_ts_table_entry_get_by_ifname(cmd->iface);
 			
 			if (iface_desc < 0 || iface_desc >= N_NL_TS_SLOTS) {
 				cmd->cmd = MYNL_CMD_QERROR_RESP;
-			} else {
-				cmd->iface = iface;
-			}
+			} 
 		}
 	}
 	
@@ -240,6 +225,14 @@ int nl_ts_getts(struct sk_buff *skb, struct genl_info *info) {
 	struct nl_ts_queue_element *qe = NULL;
 	struct nl_ts_table_entry * tbl_entry = NULL;
 	
+	ts.sec = 0;
+	ts.nsec = 0;
+	ts.seq = 0;
+	ts.valid = 0;
+	ts.ahead = 0;
+	ts.id = 0;
+	ts.type = MYNL_CMD_QERROR_RESP;
+	
 	if (info == NULL) {
 		goto out;
 	}
@@ -247,16 +240,6 @@ int nl_ts_getts(struct sk_buff *skb, struct genl_info *info) {
 	memset((void *) &cmd, 0, sizeof(cmd));
 
 	iface_desc = nl_ts_parse_skb(skb,info,&cmd);
-	
-	kfree_skb(skb);
-	
-	ts.sec = 0;
-	ts.nsec = 0;
-	ts.seq = 0;
-	ts.valid = 0;
-	ts.ahead = 0;
-	ts.id = 0;
-	ts.type = 3;
 	
 	rx_queue_cmd = (cmd.cmd == 1);
 	tx_queue_cmd = (cmd.cmd == 0);
@@ -275,7 +258,7 @@ int nl_ts_getts(struct sk_buff *skb, struct genl_info *info) {
 			if(qe) {
 				ts = qe->ts;
 			} else {
-				ts.type = 2;
+				ts.type = MYNL_CMD_QEMPTY_RESP;
 			}
 		}
 		else {
@@ -285,19 +268,16 @@ int nl_ts_getts(struct sk_buff *skb, struct genl_info *info) {
 			if(qe) {
 				ts = qe->ts;
 			} else {
-				ts.type = 2;
+				ts.type = MYNL_CMD_QEMPTY_RESP;
 			}
 		}
 			
 		kfree(qe);
-		
-		if(nl_ts_userland_send(&ts,info))
-			goto out;
 	}
 	
-	return 0;
 out:
-	printk("An error occured in generic netlink callback. \n");
+	nl_ts_userland_send(&ts,info);
+	
 	return 0;
 }
 

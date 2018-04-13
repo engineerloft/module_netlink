@@ -70,10 +70,11 @@ static int callback(struct nl_msg *msg, void *arg) {
 	ts.ahead = nla_get_u32(nested[NL_TS_A_TS_NESTED_AHEAD]);
 	ts.id = nla_get_u16(nested[NL_TS_A_TS_NESTED_ID]);
     
-    if (ts.type != 2 && ts.type != 3) {
+    if (ts.type != MYNL_CMD_QEMPTY_RESP 
+		&& ts.type != MYNL_CMD_QERROR_RESP) {
 		printf_myts(&ts);
 	} else {
-		if (ts.type == 2)
+		if (ts.type == MYNL_CMD_QEMPTY_RESP)
 			printf("QUEUE EMPTY.\n");
 		else
 			printf("QUEUE ERROR.\n");
@@ -103,13 +104,22 @@ int main(int argc, char *argv[]) {
 	
 	nlsock = nl_socket_alloc();
 	if(!nlsock) {
-		perror("Creating socket...\n");
+		perror("ERROR: Unable to create socket \n");
 		return -1;
 	}
 	
-	genl_connect(nlsock);
+	if(genl_connect(nlsock) < 0) {
+		perror("ERROR: Unable to connect to Generic Netlink \n");
+		nl_socket_free(nlsock);
+		return -1;
+	}
 	
 	family_id = genl_ctrl_resolve(nlsock,"NL_TS_FAMILY");
+	if(family_id < 0) {
+		perror("ERROR: Unable to get the Family ID \n");
+		nl_socket_free(nlsock);
+		return -1;
+	}
 	
 	nl_socket_disable_seq_check(nlsock);
 	
@@ -126,7 +136,8 @@ int main(int argc, char *argv[]) {
 			goto out2;
 		}
 		
-		p = genlmsg_put(msg,0,0,family_id,0,0,1,1);
+		p = genlmsg_put(msg,0,0,family_id,0,0,
+			NL_TS_C_GETTS,VERSION_NR);
 		if(!p) {
 			printf("ERROR: Unable to initialize the header packet \n");
 			goto out1;

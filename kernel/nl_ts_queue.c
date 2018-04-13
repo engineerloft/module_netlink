@@ -26,7 +26,8 @@ void nl_ts_queue_init(struct nl_ts_queue *q)
 	spin_lock_init(&q->lock);
 }
 
-int nl_ts_queue_enqueue(struct nl_ts_queue *q, struct nl_ts_queue_element *qe)
+int nl_ts_queue_enqueue(struct nl_ts_queue *q, 
+	struct nl_ts_queue_element *qe)
 {	
 	unsigned long flags;
 	
