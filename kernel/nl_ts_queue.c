@@ -69,3 +69,31 @@ void nl_ts_queue_kfree(struct nl_ts_queue *q)
 		kfree(qe);
 	}
 }
+
+static void nl_ts_queue_element_printk(struct nl_ts_queue_element *qe)
+{
+	if(!qe)
+		return;
+		
+	printk("\n");
+	printk("Queue element: \n");
+	printk("sec: %llu \n", qe->ts.sec);
+	printk("nsec: %llu \n", qe->ts.nsec);
+	printk("seq: %llu \n", qe->ts.seq);
+	printk("id: %u \n", qe->ts.id);
+	printk("ahead: %d \n", qe->ts.ahead);
+	printk("valid: %d \n", qe->ts.valid);
+	printk("type: %d \n", qe->ts.type);
+	printk("\n");
+}
+
+void nl_ts_queue_printk(struct nl_ts_queue *q)
+{	
+	struct list_head *i;
+	
+	list_for_each(i, &q->queue) {
+		struct nl_ts_queue_element *qe = list_entry(i, 
+			struct nl_ts_queue_element, next);
+		nl_ts_queue_element_printk(qe);
+	}
+}

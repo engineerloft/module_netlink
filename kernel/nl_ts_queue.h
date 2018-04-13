@@ -36,10 +36,26 @@ enum {
 
 struct nl_ts {
 		int type;
+#ifdef __KERNEL__
 		u64 sec;
+#else
+		uint64_t sec;
+#endif
+#ifdef __KERNEL__
 		u64 nsec;
+#else
+		uint64_t nsec;
+#endif
+#ifdef __KERNEL__
 		u64 seq;
+#else
+		uint64_t seq;
+#endif
+#ifdef __KERNEL__
 		u16 id;
+#else
+		uint16_t id;
+#endif
 		int ahead;
 		int valid;
 };
@@ -60,7 +76,7 @@ enum {
 
 struct nl_ts_cmd {
 	int cmd;
-	int iface;
+	char *iface;
 };
 
 #ifdef __KERNEL__
@@ -80,6 +96,7 @@ int nl_ts_queue_enqueue(struct nl_ts_queue *q, struct nl_ts_queue_element *qe);
 struct nl_ts_queue_element *nl_ts_queue_dequeue(struct nl_ts_queue *q);
 int nl_ts_queue_is_empty(struct nl_ts_queue *q);
 void nl_ts_queue_kfree(struct nl_ts_queue *q);
+void nl_ts_queue_printk(struct nl_ts_queue *q);
 #endif
 
 #endif /* __NL_TS_QUEUE__ */

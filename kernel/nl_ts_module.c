@@ -13,11 +13,12 @@
 
 #define N_NL_TS_SLOTS 256
 
+#define IFNAME_SIZE 10
 struct nl_ts_table_entry {
 	struct nl_ts_queue rx_queue;
 	struct nl_ts_queue tx_queue;
 	int assigned;
-	char ifname[10];
+	char ifname[IFNAME_SIZE];
 	spinlock_t lock;
 };
 
@@ -34,21 +35,9 @@ static struct nla_policy nl_ts_genl_policy[NL_TS_A_MAX + 1] = {
 	[NL_TS_A_TS_NESTED] = { .type = NLA_NESTED },
 };
 
-/**
-static struct nla_policy nl_ts_genl_ts_nested_policy[NL_TS_A_TS_NESTED_MAX + 1] = {
-	[NL_TS_A_TS_NESTED_SEC] = { .type = NLA_U64 },
-	[NL_TS_A_TS_NESTED_NSEC] = { .type = NLA_U64 },
-	[NL_TS_A_TS_NESTED_SEQ] = { .type = NLA_U64 },
-	[NL_TS_A_TS_NESTED_VALID] = { .type = NLA_U32 },
-	[NL_TS_A_TS_NESTED_ID] = { .type = NLA_U16 },
-	[NL_TS_A_TS_NESTED_AHEAD] = { .type = NLA_U32 },
-	[NL_TS_A_TS_NESTED_TYPE] = { .type = NLA_U32 },
-};
-**/
-
 static struct nla_policy nl_ts_genl_cmd_nested_policy[NL_TS_A_CMD_NESTED_MAX + 1] = {
 	[NL_TS_A_CMD_NESTED_CMD] = { .type = NLA_U32 },
-	[NL_TS_A_CMD_NESTED_IFACE] = { .type = NLA_U32 },
+	[NL_TS_A_CMD_NESTED_IFACE] = { .type = NLA_NUL_STRING, .len = IFNAME_SIZE-1 },
 };
 
 #define VERSION_NR 1
@@ -79,50 +68,64 @@ static struct nl_ts_table_entry * nl_ts_table_entry_get(int desc)
 		return  &(nl_ts_tbl._nl_ts_table[desc]);
 }
 
-static struct nl_ts_cmd nl_ts_parse_skb(struct sk_buff *skb, 
-	struct genl_info *info)
+static int nl_ts_table_entry_get_by_ifname(char *ifname)
+{
+	int desc = -1;
+	struct nl_ts_table_entry *tmp = NULL;
+	int i;
+	
+	for(i = 0 ; i < N_NL_TS_SLOTS ; i++) {
+		tmp = &(nl_ts_tbl._nl_ts_table[i]);
+		if(!strcmp(tmp->ifname, ifname)) {
+			desc = i;
+			break;
+		}
+	}
+	
+	return desc;
+}
+
+static int nl_ts_parse_skb(struct sk_buff *skb, 
+	struct genl_info *info, struct nl_ts_cmd *cmd)
 {
 	int rc;
-	struct nl_ts_cmd cmd;
 	u32 cmd_code;
-	u32 iface_code;
+	char *iface;
+	int iface_desc = -1;
 	struct nlattr *na;
 	struct nlattr *nested[NL_TS_A_CMD_NESTED_MAX+1];
 	
-	memset((void *) &cmd, 0, sizeof(cmd));
-	
 	if (info == NULL) {
-		cmd.cmd = MYNL_CMD_QERROR_RESP;
+		cmd->cmd = MYNL_CMD_QERROR_RESP;
 	} else {
 		na = info->attrs[NL_TS_A_TS_NESTED];
 		rc = nla_parse_nested(nested, 
 			NL_TS_A_CMD_NESTED_MAX, na, 
-			nl_ts_genl_cmd_nested_policy, NULL);
-		//rc = nla_parse_nested(nested, 
-		//	NL_TS_A_CMD_NESTED_MAX, na, 
-		//	nl_ts_genl_cmd_nested_policy);
+			nl_ts_genl_cmd_nested_policy);
 	
 		if(!nested[NL_TS_A_CMD_NESTED_CMD] || 
 			!nested[NL_TS_A_CMD_NESTED_IFACE]) {
-			cmd.cmd = MYNL_CMD_QERROR_RESP;
+			cmd->cmd = MYNL_CMD_QERROR_RESP;
 		} else {
 			na = nested[NL_TS_A_CMD_NESTED_CMD];
 			cmd_code = nla_get_u32(na);
 			
-			cmd.cmd = cmd_code;
+			cmd->cmd = cmd_code;
 			
 			na = nested[NL_TS_A_CMD_NESTED_IFACE];
-			iface_code = nla_get_u32(na);
+			nla_strlcpy(iface,na,IFNAME_SIZE);
 			
-			if (iface_code >= N_NL_TS_SLOTS) {
-				cmd.cmd = MYNL_CMD_QERROR_RESP;
+			iface_desc = nl_ts_table_entry_get_by_ifname(iface);
+			
+			if (iface_desc < 0 || iface_desc >= N_NL_TS_SLOTS) {
+				cmd->cmd = MYNL_CMD_QERROR_RESP;
 			} else {
-				cmd.iface = iface_code;
+				cmd->iface = iface;
 			}
 		}
 	}
 	
-	return cmd;
+	return iface_desc;
 }
 
 static int nl_ts_userland_send(struct nl_ts *ts, 
@@ -161,30 +164,24 @@ static int nl_ts_userland_send(struct nl_ts *ts,
 		goto out;
 	}
 	
-	rc = nla_put_u64_64bit(skb,NL_TS_A_TS_NESTED_SEC,
-		(u64) ts->sec, 0);
-	//rc = nla_put_u64(skb,NL_TS_A_TS_NESTED_SEC,
-	//	(u64) ts->sec);
+	rc = nla_put_u64(skb,NL_TS_A_TS_NESTED_SEC,
+		(u64) ts->sec);
 	if (rc != 0) {
 		nla_nest_cancel(skb,na);
 		rc = -1;
 		goto out;
 	}
 	
-	rc = nla_put_u64_64bit(skb,NL_TS_A_TS_NESTED_NSEC,
-		(u64) ts->nsec, 0);
-	//rc = nla_put_u64(skb,NL_TS_A_TS_NESTED_NSEC,
-	//	(u64) ts->nsec);
+	rc = nla_put_u64(skb,NL_TS_A_TS_NESTED_NSEC,
+		(u64) ts->nsec);
 	if (rc != 0) {
 		nla_nest_cancel(skb,na);
 		rc = -1;
 		goto out;
 	}
 	
-	rc = nla_put_u64_64bit(skb,NL_TS_A_TS_NESTED_SEQ,
-		(u64) ts->seq, 0);
-	//rc = nla_put_u64(skb,NL_TS_A_TS_NESTED_SEQ,
-	//	(u64) ts->seq);
+	rc = nla_put_u64(skb,NL_TS_A_TS_NESTED_SEQ,
+		(u64) ts->seq);
 	if (rc != 0) {
 		nla_nest_cancel(skb,na);
 		rc = -1;
@@ -235,6 +232,7 @@ int nl_ts_getts(struct sk_buff *skb, struct genl_info *info) {
 	int rx_queue_cmd = 0;
 	int tx_queue_cmd = 0;
 	int queue_cmd = 0;
+	int iface_desc;
 	struct nl_ts ts;
 	struct nl_ts_cmd cmd;
 	struct nl_ts_queue *tx_q = NULL;
@@ -245,8 +243,10 @@ int nl_ts_getts(struct sk_buff *skb, struct genl_info *info) {
 	if (info == NULL) {
 		goto out;
 	}
+	
+	memset((void *) &cmd, 0, sizeof(cmd));
 
-	cmd = nl_ts_parse_skb(skb,info);
+	iface_desc = nl_ts_parse_skb(skb,info,&cmd);
 	
 	kfree_skb(skb);
 	
@@ -262,7 +262,7 @@ int nl_ts_getts(struct sk_buff *skb, struct genl_info *info) {
 	tx_queue_cmd = (cmd.cmd == 0);
 	queue_cmd = rx_queue_cmd || tx_queue_cmd;
 	
-	tbl_entry = nl_ts_table_entry_get(cmd.iface);
+	tbl_entry = nl_ts_table_entry_get(iface_desc);
 	
 	if(!tbl_entry || !tbl_entry->assigned)
 		queue_cmd = 0;
@@ -301,12 +301,14 @@ out:
 	return 0;
 }
 
-struct genl_ops nl_ts_gnl_ops_getts = {
-	.cmd = NL_TS_C_GETTS,
-	.flags = 0,
-	.policy = nl_ts_genl_policy,
-	.doit = nl_ts_getts,
-	.dumpit = NULL,
+struct genl_ops nl_ts_gnl_ops[NL_TS_C_MAX+1] = {
+		[NL_TS_C_GETTS] = {
+			.cmd = NL_TS_C_GETTS,
+			.flags = 0,
+			.policy = nl_ts_genl_policy,
+			.doit = nl_ts_getts,
+			.dumpit = NULL,
+		},
 };
 
 int nl_ts_iface_tx_ts_add(int iface_desc, struct nl_ts *ts)
@@ -329,8 +331,9 @@ int nl_ts_iface_tx_ts_add(int iface_desc, struct nl_ts *ts)
 	spin_lock_irqsave(sl, flags);
 	ts_q_elem = nl_ts_queue_kmalloc(ts);
 	ts_q = &(tbl_entry->tx_queue);
-	if(!ts_q_elem)
+	if(ts_q_elem)
 		nl_ts_queue_enqueue(ts_q,ts_q_elem);
+
 	spin_unlock_irqrestore(sl, flags);
 		
 	return 0;
@@ -357,8 +360,9 @@ int nl_ts_iface_rx_ts_add(int iface_desc, struct nl_ts *ts)
 	spin_lock_irqsave(sl, flags);
 	ts_q_elem = nl_ts_queue_kmalloc(ts);
 	ts_q = &(tbl_entry->rx_queue);
-	if(!ts_q_elem)
+	if(ts_q_elem)
 		nl_ts_queue_enqueue(ts_q,ts_q_elem);
+		
 	spin_unlock_irqrestore(sl, flags);
 		
 	return 0;
@@ -421,7 +425,7 @@ EXPORT_SYMBOL(nl_ts_iface_unregister);
 
 static int __init nl_ts_module_init(void) {
 	int rc;
-	struct genl_ops * ops = &nl_ts_gnl_ops_getts;
+	struct genl_ops * ops = &nl_ts_gnl_ops[NL_TS_C_GETTS];
 	struct nl_ts_table_entry * tbl_entry  = NULL;
 	int i;
 	
@@ -435,7 +439,7 @@ static int __init nl_ts_module_init(void) {
 	
 	// Fill the family ops
 	nl_ts_gnl_family.ops = ops;
-	nl_ts_gnl_family.n_ops = 1;
+	nl_ts_gnl_family.n_ops = NL_TS_C_MAX;
 	nl_ts_gnl_family.mcgrps = NULL;
 	nl_ts_gnl_family.n_mcgrps = 0;
 	

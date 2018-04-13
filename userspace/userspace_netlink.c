@@ -19,58 +19,56 @@
 #include <netlink/genl/genl.h>
 #include <netlink/cli/utils.h>
 
-#include "mnlattr.h"
+#include "nl_ts_queue.h"
 
 #define NTIMES 100
 
-struct myts {
-		uint64_t sec;
-		uint64_t nsec;
-		uint64_t seq;
-		int valid;
-		int type;
-};
-
-void printf_myts(struct myts *ts)
+void printf_myts(struct nl_ts *ts)
 {
 	printf("============== TS ================ \n");
 	printf("Sec: %lu \n", ts->sec);
 	printf("Nsec: %lu \n", ts->nsec);
 	printf("Valid: %d \n", ts->valid);
+	printf("Ahead: %d \n", ts->ahead);
 	printf("TX_RX: %s \n", (ts->type == 0) ? "Tx" : "Rx");
 	printf("Seq: %lu \n", ts->seq);
+	printf("ID: %u \n", ts->id);
 	printf("================================== \n");
 }
 
-static struct nla_policy nested_policy[DOC_EXMPL_A_TS_NESTED_MAX + 1] = 
+static struct nla_policy nested_policy[NL_TS_A_TS_NESTED_MAX + 1] = 
 {
-	[DOC_EXMPL_A_TS_NESTED_SEC] = { .type = NLA_U64 },
-	[DOC_EXMPL_A_TS_NESTED_NSEC] = { .type = NLA_U64 },
-	[DOC_EXMPL_A_TS_NESTED_SEQ] = { .type = NLA_U64 },
-	[DOC_EXMPL_A_TS_NESTED_VALID] = { .type = NLA_U32 },
-	[DOC_EXMPL_A_TS_NESTED_TYPE] = { .type = NLA_U32 },
+	[NL_TS_A_TS_NESTED_SEC] = { .type = NLA_U64 },
+	[NL_TS_A_TS_NESTED_NSEC] = { .type = NLA_U64 },
+	[NL_TS_A_TS_NESTED_SEQ] = { .type = NLA_U64 },
+	[NL_TS_A_TS_NESTED_ID] = { .type = NLA_U16 },
+	[NL_TS_A_TS_NESTED_AHEAD] = { .type = NLA_U32 },
+	[NL_TS_A_TS_NESTED_VALID] = { .type = NLA_U32 },
+	[NL_TS_A_TS_NESTED_TYPE] = { .type = NLA_U32 },
 };
 
 static int callback(struct nl_msg *msg, void *arg) {
 	struct nlmsghdr *nlh = nlmsg_hdr(msg);
-    struct nlattr *attr[DOC_EXMPL_A_MAX+1];
-    struct nlattr *nested[DOC_EXMPL_A_TS_NESTED_MAX+1];
+    struct nlattr *attr[NL_TS_A_MAX+1];
+    struct nlattr *nested[NL_TS_A_TS_NESTED_MAX+1];
     char *buf;
     int err;
-    struct myts ts;
+    struct nl_ts ts;
     
-    err = genlmsg_parse(nlh, 0, attr, DOC_EXMPL_A_MAX, NULL);
+    err = genlmsg_parse(nlh, 0, attr, NL_TS_A_MAX, NULL);
     if(err != 0)
 		printf("ERROR %d: Unable to parse NL attributes \n", err);
 		
-	nla_parse_nested(nested,DOC_EXMPL_A_TS_NESTED_MAX,
-		attr[DOC_EXMPL_A_TS_NESTED],nested_policy);
+	nla_parse_nested(nested,NL_TS_A_TS_NESTED_MAX,
+		attr[NL_TS_A_TS_NESTED],nested_policy);
 		
-	ts.sec = nla_get_u64(nested[DOC_EXMPL_A_TS_NESTED_SEC]);
-	ts.nsec = nla_get_u64(nested[DOC_EXMPL_A_TS_NESTED_NSEC]);
-	ts.seq = nla_get_u64(nested[DOC_EXMPL_A_TS_NESTED_SEQ]);
-	ts.valid = nla_get_u32(nested[DOC_EXMPL_A_TS_NESTED_VALID]);
-	ts.type = nla_get_u32(nested[DOC_EXMPL_A_TS_NESTED_TYPE]);
+	ts.sec = nla_get_u64(nested[NL_TS_A_TS_NESTED_SEC]);
+	ts.nsec = nla_get_u64(nested[NL_TS_A_TS_NESTED_NSEC]);
+	ts.seq = nla_get_u64(nested[NL_TS_A_TS_NESTED_SEQ]);
+	ts.valid = nla_get_u32(nested[NL_TS_A_TS_NESTED_VALID]);
+	ts.type = nla_get_u32(nested[NL_TS_A_TS_NESTED_TYPE]);
+	ts.ahead = nla_get_u32(nested[NL_TS_A_TS_NESTED_AHEAD]);
+	ts.id = nla_get_u16(nested[NL_TS_A_TS_NESTED_ID]);
     
     if (ts.type != 2 && ts.type != 3) {
 		printf_myts(&ts);
@@ -111,7 +109,7 @@ int main(int argc, char *argv[]) {
 	
 	genl_connect(nlsock);
 	
-	family_id = genl_ctrl_resolve(nlsock,"HA_TS_FAMILY");
+	family_id = genl_ctrl_resolve(nlsock,"NL_TS_FAMILY");
 	
 	nl_socket_disable_seq_check(nlsock);
 	
@@ -139,10 +137,18 @@ int main(int argc, char *argv[]) {
 		else
 			tx_rx = 1;
 			
-		nested = nla_nest_start(msg,DOC_EXMPL_A_TS_NESTED);
+		nested = nla_nest_start(msg,NL_TS_A_TS_NESTED);
 		
 		if((err = nla_put_u32(msg,
-			DOC_EXMPL_A_TS_NESTED_TYPE,tx_rx)) < 0) {
+			NL_TS_A_CMD_NESTED_CMD,tx_rx)) < 0) {
+			printf("ERROR %d: Unable to add type nested attribute. \n",
+				err);
+			nla_nest_cancel(msg,nested);
+			goto out1;
+		}
+		
+		if((err = nla_put_string(msg,
+			NL_TS_A_CMD_NESTED_IFACE,"iface0")) < 0) {
 			printf("ERROR %d: Unable to add type nested attribute. \n",
 				err);
 			nla_nest_cancel(msg,nested);

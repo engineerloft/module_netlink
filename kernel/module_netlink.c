@@ -53,7 +53,7 @@ static void mytimer_handler(unsigned long data)
 		}
 			
 		if (mytimer_events % RX_TS_PERIOD == 0) {
-			tmp.type = 0;
+			tmp.type = 1;
 			tmp.seq = rx_seq;
 			nl_ts_iface_rx_ts_add(nl_ts_desc,&tmp);
 			rx_seq++;
@@ -72,6 +72,8 @@ static int __init module_netlink_init(void) {
 	nl_ts_desc = nl_ts_iface_register("iface0");
 	if(nl_ts_desc < 0)
 		goto failure;
+		
+	printk("Netlink TS desc: %d \n", nl_ts_desc);
 	
 	mod_timer(&mytimer, jiffies+TIMER_PERIOD);
 
