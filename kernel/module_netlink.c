@@ -46,14 +46,14 @@ static void mytimer_handler(unsigned long data)
 		tmp.id = 0;
 
 		if (mytimer_events % TX_TS_PERIOD == 0) {
-			tmp.type = 0;
+			tmp.type = MYNL_CMD_TX_OK_RESP;
 			tmp.seq = tx_seq;
 			nl_ts_iface_tx_ts_add(nl_ts_desc,&tmp);
 			tx_seq++;
 		}
 			
 		if (mytimer_events % RX_TS_PERIOD == 0) {
-			tmp.type = 1;
+			tmp.type = MYNL_CMD_RX_OK_RESP;
 			tmp.seq = rx_seq;
 			nl_ts_iface_rx_ts_add(nl_ts_desc,&tmp);
 			rx_seq++;
@@ -66,14 +66,17 @@ static void mytimer_handler(unsigned long data)
 
 static int __init module_netlink_init(void) {
 	
+	const char *ifname = "iface0";
+	
 	getnstimeofday(&ts_current);
 	myprintk_ts(&ts_current);
 	
-	nl_ts_desc = nl_ts_iface_register("iface0");
+	nl_ts_desc = nl_ts_iface_register(ifname);
 	if(nl_ts_desc < 0)
 		goto failure;
 		
-	printk("Netlink TS desc: %d \n", nl_ts_desc);
+	printk("Netlink TS iface: %s desc: %d \n", 
+		ifname, nl_ts_desc);
 	
 	mod_timer(&mytimer, jiffies+TIMER_PERIOD);
 

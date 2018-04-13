@@ -36,22 +36,13 @@ struct nl_ts {
 		int type;
 #ifdef __KERNEL__
 		u64 sec;
-#else
-		uint64_t sec;
-#endif
-#ifdef __KERNEL__
 		u64 nsec;
-#else
-		uint64_t nsec;
-#endif
-#ifdef __KERNEL__
 		u64 seq;
-#else
-		uint64_t seq;
-#endif
-#ifdef __KERNEL__
 		u16 id;
 #else
+		uint64_t sec;
+		uint64_t nsec;
+		uint64_t seq;
 		uint16_t id;
 #endif
 		int ahead;
@@ -60,9 +51,11 @@ struct nl_ts {
 
 #define MYNL_CMD_GETTS_TX 0
 #define MYNL_CMD_GETTS_RX 1
-#define MYNL_CMD_OK_RESP 2
-#define MYNL_CMD_QEMPTY_RESP 3
-#define MYNL_CMD_QERROR_RESP 4
+
+#define MYNL_CMD_TX_OK_RESP 0
+#define MYNL_CMD_RX_OK_RESP 1
+#define MYNL_CMD_QEMPTY_RESP 2
+#define MYNL_CMD_QERROR_RESP 3
 
 enum {
 	NL_TS_A_CMD_NESTED_UNSPEC,

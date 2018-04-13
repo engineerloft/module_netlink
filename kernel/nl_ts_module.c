@@ -257,6 +257,7 @@ int nl_ts_getts(struct sk_buff *skb, struct genl_info *info) {
 			qe = nl_ts_queue_dequeue(rx_q);
 			if(qe) {
 				ts = qe->ts;
+				ts.type = MYNL_CMD_RX_OK_RESP;
 			} else {
 				ts.type = MYNL_CMD_QEMPTY_RESP;
 			}
@@ -267,6 +268,7 @@ int nl_ts_getts(struct sk_buff *skb, struct genl_info *info) {
 			qe = nl_ts_queue_dequeue(tx_q);
 			if(qe) {
 				ts = qe->ts;
+				ts.type = MYNL_CMD_TX_OK_RESP;
 			} else {
 				ts.type = MYNL_CMD_QEMPTY_RESP;
 			}
